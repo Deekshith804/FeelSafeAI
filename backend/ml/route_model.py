@@ -174,14 +174,14 @@ def _simulate_ml(features: list) -> float:
      time_of_day, unsafe_zone_density) = features
 
     score = 50.0
-    score += near_police   * 22
-    score += near_hospital * 16
+    score += near_police   * 25
+    score += near_hospital * 20
     score += (community_rating / 5.0) * 20
-    score += (crowd_level  / 5.0)     * 10
-    score -= isolated       * 20
+    score += (crowd_level  / 5.0)     * 15
+    score -= isolated       * 25
     score -= unsafe_reports * 4
     score -= unsafe_zone_density * 6
-    score -= time_of_day   * 8      # 0=day, 1=night, 2=deep night
+    score -= time_of_day   * 10      # 0=day, 1=night, 2=deep night
     return clamp(score, 0, 100)
 
 
@@ -256,11 +256,11 @@ def _dynamic_adjustment(
 # ── Labels & Explanation ──────────────────────────────────────────────────────
 
 def _score_label(score: int) -> str:
-    if score >= ROUTE_SAFE_THRESHOLD:
-        return "Safe"
-    if score >= ROUTE_MODERATE_THRESHOLD:
-        return "Moderate"
-    return "Unsafe"
+    if score >= 65:
+        return "SAFEST ROUTE"
+    if score >= 40:
+        return "SAFE ROUTE"
+    return "UNSAFE ROUTE"
 
 
 def _build_explanation(

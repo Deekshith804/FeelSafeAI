@@ -26,11 +26,30 @@ const makeIcon = (color, size = 32, pulse = false) => L.divIcon({
   iconAnchor: [size / 2, size / 2],
 });
 
-const SOURCE_ICON   = makeIcon('#00E5FF', 20);
-const DEST_ICON     = makeIcon('#00FF9D', 20);
-const USER_ICON_LOW  = makeIcon('#00FF9D', 24, true);
-const USER_ICON_MED  = makeIcon('#FFC857', 24, true);
-const USER_ICON_HIGH = makeIcon('#FF3B5C', 24, true);
+const makeIconWithSymbol = (color, symbol, size = 32) => L.divIcon({
+  className: "",
+  html: `<div style="
+    width:${size}px;height:${size}px;border-radius:50%;
+    background:${color};border:2px solid white;
+    box-shadow:0 0 10px ${color};
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;
+  ">${symbol}</div>`,
+  iconSize:   [size, size],
+  iconAnchor: [size / 2, size / 2],
+});
+
+const SOURCE_ICON   = makeIcon('#00FF9D', 24); // Green Start
+const DEST_ICON     = makeIcon('#FF3B5C', 24); // Red Destination
+const USER_ICON_LOW  = makeIcon('#00FF9D', 28, true);
+const USER_ICON_MED  = makeIcon('#FFC857', 28, true);
+const USER_ICON_HIGH = makeIcon('#FF3B5C', 28, true);
+
+const HOSPITAL_ICON  = makeIconWithSymbol('#00E5FF', '🏥');
+const MEDICAL_ICON   = makeIconWithSymbol('#00FF9D', '💊');
+const MALL_ICON      = makeIconWithSymbol('#FFC857', '🛍️');
+const POLICE_ICON    = makeIconWithSymbol('#0055FF', '🛡️');
+const CROWDED_ICON   = makeIconWithSymbol('#FFC857', '👥');
 
 const getUserIcon = (riskLevel) => {
   if (riskLevel === 'HIGH')   return USER_ICON_HIGH;
@@ -84,7 +103,7 @@ export default function MapView({
   markers          = [],
   routeColor       = '#00E5FF',
   riskLevel        = 'LOW',
-  showUnsafeZones  = true,
+  showUnsafeZones  = false,
 }) {
   const defaultCenter = source || [28.6315, 77.2167]; // Delhi CP fallback
   const validRoute    = routeCoordinates.filter(c => c && c[0] != null && c[1] != null);
@@ -109,9 +128,9 @@ export default function MapView({
       style={{ height: "100%", width: "100%", borderRadius: "1.5rem", background: "#0B1020" }}
       zoomControl={false}
     >
-      {/* Dark map tiles */}
+      {/* Realistic Normal Map */}
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
       />
 
@@ -123,12 +142,20 @@ export default function MapView({
       {/* Camera follow during trip */}
       {currentPosition && <CameraFollow position={currentPosition} />}
 
-      {/* Route polyline */}
+      {/* Glowing route polyline */}
       {validRoute.length >= 2 && (
-        <Polyline
-          positions={validRoute}
-          pathOptions={{ color: routeColor, weight: 5, opacity: 0.9, dashArray }}
-        />
+        <>
+          {/* Outer glow layer */}
+          <Polyline
+            positions={validRoute}
+            pathOptions={{ color: routeColor, weight: 12, opacity: 0.3, dashArray }}
+          />
+          {/* Inner solid line */}
+          <Polyline
+            positions={validRoute}
+            pathOptions={{ color: routeColor, weight: 5, opacity: 1, dashArray }}
+          />
+        </>
       )}
 
       {/* Source marker */}
@@ -175,11 +202,19 @@ export default function MapView({
       ))}
 
       {/* Extra markers (e.g. police, hospitals) */}
-      {markers.map((m, i) => (
-        <Marker key={i} position={m.position} icon={makeIcon(m.color || '#FFC857', 16)}>
-          {m.label && <Popup>{m.label}</Popup>}
-        </Marker>
-      ))}
+      {markers.map((m, i) => {
+        let markerIcon = makeIcon(m.color || '#FFC857', 16);
+        if (m.type === 'hospital') markerIcon = HOSPITAL_ICON;
+        else if (m.type === 'medical') markerIcon = MEDICAL_ICON;
+        else if (m.type === 'mall') markerIcon = MALL_ICON;
+        else if (m.type === 'police') markerIcon = POLICE_ICON;
+        else if (m.type === 'crowded') markerIcon = CROWDED_ICON;
+        return (
+          <Marker key={i} position={m.position} icon={markerIcon}>
+            {m.label && <Popup>{m.label}</Popup>}
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 }

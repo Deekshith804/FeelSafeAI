@@ -1,29 +1,12 @@
 """
 services/saferoute_service.py
 ==============================
-MAIN NOVELTY FEATURE — Smart SafeRoute AI.
-
-Calculates the safest route using:
-  - Police stations nearby (+)
-  - Hospitals nearby (+)
-  - Isolated roads (-)
-  - Community unsafe reports (-)  ← exponential penalty
-  - Community safety ratings (+)  ← trust-weighted
-  - Time of day / nighttime (-)   ← tiered (early night vs deep night)
-  - Known unsafe zones (-)
-  - Route tags (well_lit, cctv_present, busy_road) bonus
-
-AI Explanation Engine:
-  - Human-readable, context-aware explanations
-  - Differentiated reasoning between routes
-  - Night-mode warnings and specific safety tips
-
-All scoring is rule-based — no heavy ML models.
+Real road-following routing using OSRM + FeelSafe safety scoring.
 """
 
 import json
 import os
-import random
+import requests
 from utils.risk_scoring import compute_route_safety_score, _score_to_label
 from utils.location_utils import find_nearby, haversine_km
 from utils.constants import UNSAFE_ZONE_RADIUS_KM
@@ -35,9 +18,6 @@ _DATA = os.path.join(_BASE, "..", "data")
 
 with open(os.path.join(_DATA, "unsafe_zones.json"),  encoding="utf-8") as f:
     UNSAFE_ZONES = json.load(f)
-
-with open(os.path.join(_DATA, "sample_routes.json"), encoding="utf-8") as f:
-    SAMPLE_ROUTES = json.load(f)
 
 # Static POI lists (extend or replace with Overpass API in production)
 POLICE_POI = [
@@ -67,6 +47,7 @@ HOSPITAL_POI = [
 ]
 
 SEARCH_RADIUS_KM = 1.5
+OSRM_BASE_URL = "https://router.project-osrm.org"
 
 # Tag bonuses — route tags that improve safety score
 _TAG_BONUSES: dict[str, int] = {
@@ -90,36 +71,14 @@ _TAG_PENALTIES: dict[str, int] = {
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def get_safest_route(
-    origin_lat: float,
-    origin_lon: float,
-    dest_lat: float,
-    dest_lon: float,
-) -> dict:
-    """
-    Rank all sample routes by safety score and return the safest one.
-
-    Returns:
-        {
-            "safest_route":      dict,
-            "all_routes_ranked": list,
-            "explanation":       str,
-        }
-    """
-    candidates = _find_candidate_routes(origin_lat, origin_lon, dest_lat, dest_lon)
-
+def get_safest_route(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict:
+    """Fetch real OSRM alternatives and rank them by safety score."""
+    candidates = _fetch_osrm_routes(origin_lat, origin_lon, dest_lat, dest_lon)
     if not candidates:
         fallback = _score_direct_route(origin_lat, origin_lon, dest_lat, dest_lon)
-        return {
-            "safest_route":      fallback,
-            "all_routes_ranked": [fallback],
-            "explanation": (
-                "No pre-defined routes matched your journey. "
-                "A direct route has been evaluated using real-time safety conditions."
-            ),
-        }
+        return {"safest_route": fallback, "all_routes_ranked": [fallback], "explanation": "OSRM unavailable; scored direct fallback route."}
 
-    scored = [_score_route(r) for r in candidates]
+    scored = [_score_route(r, origin_lat, origin_lon, dest_lat, dest_lon) for r in candidates]
     scored.sort(key=lambda r: r["safety_score"], reverse=True)   # Safest first
 
     best  = scored[0]
@@ -271,79 +230,96 @@ def _nearest_poi_name(route: dict, poi_list: list) -> str | None:
 
 # ── Internal Helpers ──────────────────────────────────────────────────────────
 
-def _find_candidate_routes(
-    origin_lat: float, origin_lon: float,
-    dest_lat:   float, dest_lon:   float,
-    max_origin_km: float = 5.0,
-    max_dest_km:   float = 5.0,
-) -> list:
-    """Filter sample routes to those near the user's origin and destination."""
-    results = []
-    for route in SAMPLE_ROUTES:
-        o = route["origin"]
-        d = route["destination"]
-        if (haversine_km(origin_lat, origin_lon, o["lat"], o["lon"]) <= max_origin_km and
-                haversine_km(dest_lat, dest_lon, d["lat"], d["lon"]) <= max_dest_km):
-            results.append(route)
-    return results
+def _fetch_osrm_routes(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> list:
+    """Fetch real driving routes from OSRM public API."""
+    coords = f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
+    url = f"{OSRM_BASE_URL}/route/v1/driving/{coords}"
+    params = {
+        "alternatives": "true",
+        "overview": "full",
+        "geometries": "geojson",
+        "steps": "false",
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=12)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        return []
+
+    routes = payload.get("routes", [])
+    normalized = []
+    for idx, route in enumerate(routes):
+        coords_ll = route.get("geometry", {}).get("coordinates", [])
+        if len(coords_ll) < 2:
+            continue
+        waypoints = [{"lat": lat, "lon": lon} for lon, lat in coords_ll]
+        route_id = f"osrm_{idx}_{int(route.get('distance', 0))}"
+        normalized.append({
+            "id": route_id,
+            "name": "Safest Candidate" if idx == 0 else f"Alternative {idx}",
+            "origin": {"lat": origin_lat, "lon": origin_lon, "name": "Origin"},
+            "destination": {"lat": dest_lat, "lon": dest_lon, "name": "Destination"},
+            "distance_km": round(route.get("distance", 0.0) / 1000, 2),
+            "eta_minutes": round(route.get("duration", 0.0) / 60),
+            "duration_seconds": round(route.get("duration", 0.0)),
+            "waypoints": waypoints,
+        })
+    return normalized
 
 
-def _score_route(route: dict) -> dict:
-    """Score a single route from sample_routes.json using all safety factors."""
-    mid_lat = (route["origin"]["lat"] + route["destination"]["lat"]) / 2
-    mid_lon = (route["origin"]["lon"] + route["destination"]["lon"]) / 2
+def _score_route(route: dict, origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict:
+    """Score a real route using geometry, nearby POIs, and unsafe-zone proximity."""
+    waypoints = route.get("waypoints", [])
+    mid = waypoints[len(waypoints) // 2] if waypoints else {"lat": (origin_lat + dest_lat) / 2, "lon": (origin_lon + dest_lon) / 2}
+    mid_lat = mid["lat"]
+    mid_lon = mid["lon"]
 
     # Live community stats (DB)
     stats = get_route_stats(route["id"])
-    community_rating    = stats["avg_rating"]          if stats["total_ratings"] > 0 else route.get("community_rating", 3.0)
-    total_ratings       = stats["total_ratings"]       or 0
-    unsafe_report_count = stats["unsafe_report_count"] or route.get("unsafe_report_count", 0)
+    community_rating = stats["avg_rating"] if stats["total_ratings"] > 0 else 3.2
+    total_ratings = stats["total_ratings"] or 0
+    unsafe_report_count = stats["unsafe_report_count"] or 0
 
     # POI proximity
-    has_police   = route.get("nearby_police",   False) or bool(find_nearby(mid_lat, mid_lon, POLICE_POI,   radius_km=SEARCH_RADIUS_KM))
-    has_hospital = route.get("nearby_hospital", False) or bool(find_nearby(mid_lat, mid_lon, HOSPITAL_POI, radius_km=SEARCH_RADIUS_KM))
+    has_police = bool(find_nearby(mid_lat, mid_lon, POLICE_POI, radius_km=SEARCH_RADIUS_KM))
+    has_hospital = bool(find_nearby(mid_lat, mid_lon, HOSPITAL_POI, radius_km=SEARCH_RADIUS_KM))
 
     # Unsafe zone penalty
-    unsafe_zone_hits     = _count_unsafe_zones_on_route(route)
+    unsafe_zone_hits = _count_unsafe_zones_on_route(route)
     unsafe_report_count += unsafe_zone_hits * 2    # each unsafe zone = 2 extra reports
 
     result = compute_route_safety_score(
         has_hospital_nearby = has_hospital,
         has_police_nearby   = has_police,
-        is_isolated         = route.get("is_isolated", False),
+        is_isolated = unsafe_zone_hits >= 2,
         unsafe_report_count = unsafe_report_count,
-        community_rating    = float(community_rating),
-        total_ratings       = total_ratings,
+        community_rating = float(community_rating),
+        total_ratings = total_ratings,
     )
 
-    # Apply tag bonuses / penalties on top of the base score
-    tag_delta = _compute_tag_delta(route.get("tags", []))
-    final_score = max(0, min(100, result["score"] + tag_delta))
-    if tag_delta > 0:
-        result["factors"].append(f"Route quality tags (+{tag_delta})")
-    elif tag_delta < 0:
-        result["factors"].append(f"Route risk tags ({tag_delta})")
+    # Prefer shorter routes slightly, but safety remains primary.
+    distance_adjustment = max(-6, min(4, int((8 - route.get("distance_km", 8)) * 0.7)))
+    final_score = max(0, min(100, result["score"] + distance_adjustment))
+    if distance_adjustment != 0:
+        result["factors"].append(f"Distance adjustment ({distance_adjustment:+d})")
 
     return {
         **route,
-        "safety_score":   final_score,
-        "safety_label":   _score_to_label(final_score),
+        "safety_score": final_score,
+        "safety_label": _score_to_label(final_score),
         "safety_factors": result["factors"],
-        "is_nighttime":   result["is_nighttime"],
-        "is_deep_night":  result.get("is_deep_night", False),
+        "is_nighttime": result["is_nighttime"],
+        "is_deep_night": result.get("is_deep_night", False),
         "community_stats": stats,
-        "report_penalty":  result.get("report_penalty", 0),
-        "rating_bonus":    result.get("rating_bonus", 0),
+        "report_penalty": result.get("report_penalty", 0),
+        "rating_bonus": result.get("rating_bonus", 0),
+        "nearby_police": has_police,
+        "nearby_hospital": has_hospital,
+        "unsafe_report_count": unsafe_report_count,
+        "is_isolated": unsafe_zone_hits >= 2,
+        "tags": ["well_lit"] if unsafe_zone_hits == 0 else ["isolated_stretch"],
     }
-
-
-def _compute_tag_delta(tags: list) -> int:
-    """Calculate net score adjustment from route quality tags."""
-    delta = 0
-    for tag in tags:
-        delta += _TAG_BONUSES.get(tag, 0)
-        delta -= _TAG_PENALTIES.get(tag, 0)
-    return delta
 
 
 def _score_direct_route(
@@ -388,12 +364,15 @@ def _score_direct_route(
 
 def _count_unsafe_zones_on_route(route: dict) -> int:
     """Count how many known unsafe zones fall near the route's waypoints."""
-    waypoints = route.get("waypoints", []) + [
-        {"lat": route["origin"]["lat"],      "lon": route["origin"]["lon"]},
-        {"lat": route["destination"]["lat"], "lon": route["destination"]["lon"]},
-    ]
+    waypoints = route.get("waypoints", [])
+    if not waypoints:
+        waypoints = [
+            {"lat": route["origin"]["lat"], "lon": route["origin"]["lon"]},
+            {"lat": route["destination"]["lat"], "lon": route["destination"]["lon"]},
+        ]
+    sampled = waypoints[:: max(1, len(waypoints) // 60)]
     hits = set()
-    for wp in waypoints:
+    for wp in sampled:
         for zone in UNSAFE_ZONES:
             if haversine_km(wp["lat"], wp["lon"], zone["lat"], zone["lon"]) <= UNSAFE_ZONE_RADIUS_KM:
                 hits.add(zone["id"])

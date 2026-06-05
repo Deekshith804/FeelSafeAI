@@ -1,28 +1,32 @@
 // pages/Dashboard.jsx - Live dashboard with real backend data + animated feed
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, MapPin, Shield, Users, Zap, AlertOctagon, RefreshCw } from 'lucide-react';
+import { Activity, MapPin, Shield, Users, Zap, AlertOctagon, RefreshCw, ShieldAlert, FileText } from 'lucide-react';
 import SafetyRating from '../components/SafetyRating';
-import { checkHealth, getCommunityFeed, getCommunityStats, getActiveTrips } from '../services/api';
+import { checkHealth, getCommunityFeed, getCommunityStats, getActiveTrips, getCybercrimeHotspots, getFIRList } from '../services/api';
 
 export default function Dashboard() {
   const [apiStatus, setApiStatus] = useState('checking');
   const [stats, setStats] = useState(null);
   const [feed, setFeed] = useState([]);
   const [activeTrips, setActiveTrips] = useState([]);
+  const [cyberCount, setCyberCount] = useState(12);
+  const [firCount, setFirCount] = useState(3);
   const [refreshing, setRefreshing] = useState(false);
   const timerRef = useRef(null);
 
   const loadData = async () => {
     setRefreshing(true);
     try {
-      const [health, statsRes, feedRes, tripsRes] = await Promise.allSettled([
-        checkHealth(), getCommunityStats(1), getCommunityFeed(12), getActiveTrips(1),
+      const [health, statsRes, feedRes, tripsRes, cyberRes, firRes] = await Promise.allSettled([
+        checkHealth(), getCommunityStats(1), getCommunityFeed(12), getActiveTrips(1), getCybercrimeHotspots(), getFIRList(1)
       ]);
       setApiStatus(health.value?.status === 'ok' ? 'ok' : 'offline');
       if (statsRes.value?.success) setStats(statsRes.value.stats);
       if (feedRes.value?.success)  setFeed(feedRes.value.feed);
       if (tripsRes.value?.success) setActiveTrips(tripsRes.value.trips || []);
+      if (cyberRes.value?.success) setCyberCount(cyberRes.value.count || cyberRes.value.hotspots?.length || 12);
+      if (firRes.value?.success) setFirCount(firRes.value.count || firRes.value.firs?.length || 3);
     } catch { setApiStatus('offline'); }
     finally  { setRefreshing(false); }
   };
@@ -61,11 +65,13 @@ export default function Dashboard() {
           <SafetyRating score={stats?.avg_safety_score ?? 72} />
           <p className="text-xs text-gray-500 mt-3">Derived from real trip + community data</p>
         </div>
-        <div className="glass p-6 rounded-3xl md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="glass p-6 rounded-3xl md:col-span-2 grid grid-cols-2 md:grid-cols-3 gap-4">
           <StatBox icon={<MapPin />}       label="Total Trips"      value={stats?.total_trips ?? '—'}       color="#00E5FF" />
           <StatBox icon={<Zap />}          label="Active Now"        value={stats?.active_trips ?? activeTrips.length} color="#00FF9D" pulse />
           <StatBox icon={<AlertOctagon />} label="SOS Alerts"        value={stats?.sos_alerts ?? '—'}        color="#FF3B5C" />
           <StatBox icon={<Users />}        label="Community Reports" value={stats?.community_reports ?? '—'} color="#FFC857" />
+          <StatBox icon={<ShieldAlert />}  label="Cyber Hotspots"   value={cyberCount}                      color="#00E5FF" />
+          <StatBox icon={<FileText />}     label="FIR Complaints"   value={firCount}                       color="#7C4DFF" />
         </div>
       </div>
 

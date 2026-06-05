@@ -41,32 +41,10 @@ def compute_route_safety_score(
     total_ratings: int = 0,         # number of community raters (trust signal)
     current_hour: int | None = None,
     add_variation: bool = True,     # simulate real-time micro-changes
+    crowd_level: int = 3,           # crowd density safety (1-5)
 ) -> dict:
     """
     Compute a composite safety score (0-100) for a route segment.
-
-    Enhancements vs v1:
-      - Exponential report penalty: each additional report hurts more
-      - Trust-weighted community rating: more raters → stronger influence
-      - Deep-night vs early-night distinction (22:00–04:00 gets harder penalty)
-      - Police proximity weighted heavier when isolated
-      - Small random jitter (±3 pts) to simulate real-time variability
-      - Full factor explanations for the AI explanation engine
-
-    Args:
-        has_hospital_nearby:  True if a hospital is within the safe radius.
-        has_police_nearby:    True if a police station is within the safe radius.
-        is_isolated:          True if the road is isolated / no bystanders.
-        unsafe_report_count:  Number of community-submitted unsafe reports.
-        community_rating:     Average community safety rating (0–5 scale).
-        total_ratings:        How many people submitted the rating (credibility).
-        current_hour:         Hour of day (0-23); defaults to system local hour.
-        add_variation:        If True, adds ±3 pts of controlled random variation.
-
-    Returns:
-        dict with keys: score (int), label (str), factors (list[str]),
-                        is_nighttime (bool), is_deep_night (bool),
-                        report_penalty (int), rating_bonus (float)
     """
     if current_hour is None:
         current_hour = current_hour_local()
@@ -77,8 +55,7 @@ def compute_route_safety_score(
 
     # ── Police Proximity ──────────────────────────────────────────────────────
     if has_police_nearby:
-        # Police matters MORE when road is isolated
-        police_bonus = 28 if is_isolated else 22
+        police_bonus = 25
         score += police_bonus
         factors.append(f"Police station nearby (+{police_bonus})")
         detailed["police"] = police_bonus
@@ -87,60 +64,58 @@ def compute_route_safety_score(
 
     # ── Hospital Proximity ────────────────────────────────────────────────────
     if has_hospital_nearby:
-        score += 18
-        factors.append("Hospital within safe distance (+18)")
-        detailed["hospital"] = 18
+        score += 20
+        factors.append("Hospital within safe distance (+20)")
+        detailed["hospital"] = 20
     else:
         detailed["hospital"] = 0
 
     # ── Trust-weighted Community Rating ───────────────────────────────────────
-    # Base rating bonus: 0–5 → 0–35 points
-    # Trust multiplier: tapers from 0.5 (0 raters) → 1.0 (≥20 raters)
     raw_rating_bonus = community_rating * 7.0          # max 35
     trust_multiplier = _trust_weight(total_ratings)
     rating_bonus = raw_rating_bonus * trust_multiplier
     score += rating_bonus
     if community_rating > 0:
-        trust_pct = int(trust_multiplier * 100)
         factors.append(
-            f"Community rating {community_rating:.1f}/5 "
-            f"({total_ratings} rater{'s' if total_ratings != 1 else ''}, "
-            f"{trust_pct}% trust weight, +{rating_bonus:.1f})"
+            f"Community rating {community_rating:.1f}/5 (+{rating_bonus:.1f})"
         )
     detailed["rating_bonus"] = rating_bonus
 
+    # ── Crowd Density Safety ──────────────────────────────────────────────────
+    crowd_bonus = (crowd_level / 5.0) * 15.0
+    score += crowd_bonus
+    factors.append(f"Crowd density safety (+{crowd_bonus:.1f})")
+    detailed["crowd"] = crowd_bonus
+
     # ── Isolation Penalty ─────────────────────────────────────────────────────
     if is_isolated:
-        score -= 22
-        factors.append("Isolated / poorly-lit road (-22)")
-        detailed["isolated"] = -22
+        score -= 25
+        factors.append("Isolated / poorly-lit road (-25)")
+        detailed["isolated"] = -25
     else:
         detailed["isolated"] = 0
 
     # ── Exponential Unsafe Report Penalty ─────────────────────────────────────
-    # Formula: penalty = 5 * n * (1 + 0.15*(n-1))  capped at 35
-    # n=1 → 5,  n=3 → 17.7,  n=5 → 31.25,  n≥6 → capped at 35
     report_penalty = _exponential_report_penalty(unsafe_report_count)
     if report_penalty > 0:
         score -= report_penalty
-        severity = "critical" if unsafe_report_count >= 6 else \
-                   "high" if unsafe_report_count >= 4 else "moderate"
         factors.append(
-            f"{unsafe_report_count} unsafe reports — {severity} risk area "
-            f"(-{report_penalty:.0f})"
+            f"{unsafe_report_count} unsafe reports (-{report_penalty:.0f})"
         )
-    detailed["report_penalty"] = -report_penalty
+        detailed["report_penalty"] = -report_penalty
+    else:
+        detailed["report_penalty"] = 0
 
     # ── Nighttime Penalty (tiered) ────────────────────────────────────────────
     is_night, is_deep_night = _nighttime_tier(current_hour)
     if is_deep_night:
-        score -= 22
-        factors.append("Deep night travel (10 PM – 4 AM) — highest risk (-22)")
-        detailed["night"] = -22
+        score -= 20
+        factors.append("Deep night travel (10 PM – 4 AM) — highest risk (-20)")
+        detailed["night"] = -20
     elif is_night:
-        score -= 12
-        factors.append("Evening / early-night travel — elevated risk (-12)")
-        detailed["night"] = -12
+        score -= 10
+        factors.append("Evening / early-night travel — elevated risk (-10)")
+        detailed["night"] = -10
     else:
         detailed["night"] = 0
 
@@ -225,11 +200,11 @@ def _is_nighttime(hour: int) -> bool:
 
 def _score_to_label(score: int) -> str:
     """Convert numeric score to human-readable safety label."""
-    if score >= ROUTE_SAFE_THRESHOLD:
-        return "Safe"
-    if score >= ROUTE_MODERATE_THRESHOLD:
-        return "Moderate"
-    return "Unsafe"
+    if score >= 65:
+        return "SAFEST ROUTE"
+    if score >= 40:
+        return "SAFE ROUTE"
+    return "UNSAFE ROUTE"
 
 
 # ── Threat Score → Risk Level ──────────────────────────────────────────────────

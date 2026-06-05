@@ -91,6 +91,26 @@ export const getSafestRoute = (originLat, originLon, destLat, destLon) =>
     route_count: 1,
   });
 
+export const geocodeLocation = async (query) => {
+  const q = (query || '').trim();
+  if (!q) return null;
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(q)}`;
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return {
+      lat: Number(data[0].lat),
+      lon: Number(data[0].lon),
+      display_name: data[0].display_name,
+    };
+  } catch (err) {
+    console.error('[API] geocode failed:', err.message);
+    return null;
+  }
+};
+
 export const submitRouteFeedback = (routeId, rating, isUnsafe = false, comment = '') =>
   apiCall('/api/submit-route-feedback', {
     method: 'POST',
@@ -101,10 +121,10 @@ export const getRouteStats = (routeId) =>
   apiCall(`/api/route-stats/${routeId}`);
 
 // ── Emergency ─────────────────────────────────────────────────────────────────
-export const triggerEmergency = (lat, lon, userId = 1, userName = 'FeelSafe User', tripId = null, contactPhone = null, riskLevel = 'HIGH', threatText = '') =>
+export const triggerEmergency = (lat, lon, userId = 1, userName = 'FeelSafe User', tripId = null, contactPhone = null, riskLevel = 'HIGH', threatText = '', extraData = {}) =>
   apiCall('/api/emergency-alert', {
     method: 'POST',
-    body: JSON.stringify({ lat, lon, user_id: userId, user_name: userName, trip_id: tripId, contact_phone: contactPhone, risk_level: riskLevel, threat_text: threatText }),
+    body: JSON.stringify({ lat, lon, user_id: userId, user_name: userName, trip_id: tripId, contact_phone: contactPhone, risk_level: riskLevel, threat_text: threatText, ...extraData }),
   }, {
     success: true,
     whatsapp_link: `https://wa.me/?text=EMERGENCY+ALERT`,
@@ -116,10 +136,10 @@ export const triggerEmergency = (lat, lon, userId = 1, userName = 'FeelSafe User
     escalation_level: 1,
   });
 
-export const retryEmergency = (lat, lon, previousAttempt, userId = 1) =>
+export const retryEmergency = (lat, lon, previousAttempt, userId = 1, contactNumbers = []) =>
   apiCall('/api/emergency-retry', {
     method: 'POST',
-    body: JSON.stringify({ lat, lon, previous_attempt: previousAttempt, user_id: userId }),
+    body: JSON.stringify({ lat, lon, previous_attempt: previousAttempt, user_id: userId, contact_numbers: contactNumbers }),
   });
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
@@ -157,3 +177,93 @@ export const getCommunityStats = (userId = 1) =>
     success: true,
     stats: { total_trips: 0, active_trips: 0, sos_alerts: 0, community_reports: 0, avg_safety_score: 72 },
   });
+
+// ── Cybercrime Hotspot Mapping ────────────────────────────────────────────────
+export const getCybercrimeHotspots = (lat = null, lon = null) =>
+  apiCall(`/api/cybercrime/hotspots${lat && lon ? `?lat=${lat}&lon=${lon}` : ''}`, {}, { success: true, hotspots: [], count: 0 });
+
+export const getCybercrimeForecast = (hours = 24) =>
+  apiCall(`/api/cybercrime/forecast?hours=${hours}`, {}, { success: true, forecast: [], hours: 24, count: 0 });
+
+export const getCyberThreatFeed = (limit = 20) =>
+  apiCall(`/api/cybercrime/threats?limit=${limit}`, {}, { success: true, threats: [], count: 0 });
+
+export const submitCyberReport = (data) =>
+  apiCall('/api/cybercrime/report', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const getCyberGovAlerts = (limit = 10) =>
+  apiCall(`/api/cybercrime/gov-alerts?limit=${limit}`, {}, { success: true, advisories: [], count: 0 });
+
+// ── Auto FIR & Complaint Generator ───────────────────────────────────────────
+export const generateFIR = (data) =>
+  apiCall('/api/fir/generate', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const getFIRList = (userId = 1, limit = 20) =>
+  apiCall(`/api/fir/list?user_id=${userId}&limit=${limit}`, {}, { success: true, firs: [], count: 0 });
+
+export const getFIRDetail = (firId) =>
+  apiCall(`/api/fir/${firId}`, {}, { success: false, error: 'FIR not found' });
+
+export const updateFIRStatus = (firId, status, officer = null) =>
+  apiCall(`/api/fir/status/${firId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status, assigned_officer: officer }),
+  });
+
+export const uploadEvidence = async (formData) => {
+  try {
+    const res = await fetch(`${API_BASE}/api/fir/evidence`, {
+      method: 'POST',
+      body: formData, // contains file and fir_id
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error('[API] uploadEvidence failed:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+export const getFIRLanguages = () =>
+  apiCall('/api/fir/languages', {}, { success: true, languages: {} });
+
+// ── AI Emergency Severity Detection (Upgrade) ────────────────────────────────
+export const analyzeSeverity = (text, lat = null, lon = null, voiceFeatures = null, userId = 1) =>
+  apiCall('/api/severity/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ text, lat, lon, voice_features: voiceFeatures, user_id: userId }),
+  }, {
+    success: true,
+    severity: 'LOW',
+    fused_score: 0.0,
+    explanation: 'Fallback severity (offline mode).',
+  });
+
+// ── Smart Emergency Infrastructure ──────────────────────────────────────────
+export const getNearbyServices = (lat, lon, radiusKm = 5.0) =>
+  apiCall('/api/infrastructure/nearby-services', {
+    method: 'POST',
+    body: JSON.stringify({ lat, lon, radius_km: radiusKm }),
+  }, { success: true, services: [], count: 0 });
+
+export const getWomenSafeRoute = (originLat, originLon, destLat, destLon, womenMode = true) =>
+  apiCall('/api/infrastructure/safe-route-enhanced', {
+    method: 'POST',
+    body: JSON.stringify({ origin_lat: originLat, origin_lon: originLon, dest_lat: destLat, dest_lon: destLon, women_safety_mode: womenMode }),
+  });
+
+export const getHighwayPatrol = (lat, lon) =>
+  apiCall(`/api/infrastructure/highway-patrol?lat=${lat}&lon=${lon}`);
+
+export const dispatch112 = (lat, lon, userName = 'FeelSafe User') =>
+  apiCall('/api/infrastructure/dispatch-112', {
+    method: 'POST',
+    body: JSON.stringify({ lat, lon, user_name: userName }),
+  });
+

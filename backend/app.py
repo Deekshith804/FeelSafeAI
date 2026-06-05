@@ -4,6 +4,10 @@ FeelSafe Backend - Main Application Entry Point
 Initializes Flask app, registers all blueprints, and starts the server.
 """
 
+import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before anything else — critical for Twilio credentials
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 
@@ -14,10 +18,16 @@ from routes.emergency_routes import emergency_bp
 from routes.saferoute_routes import saferoute_bp
 from routes.contact_routes   import contact_bp
 from routes.community_routes import community_bp
+from routes.cybercrime_routes     import cybercrime_bp
+from routes.fir_routes            import fir_bp
+from routes.severity_routes       import severity_bp
+from routes.infrastructure_routes import infrastructure_bp
 
 # Import database initialiser
 from models.trip_model    import init_db
 from models.contact_model import init_contacts_table, seed_demo_contacts
+from models.cybercrime_model import init_cybercrime_tables
+from models.fir_model import init_fir_tables
 
 
 def create_app():
@@ -31,6 +41,8 @@ def create_app():
     init_db()
     init_contacts_table()
     seed_demo_contacts(user_id=1)   # Pre-populate demo contacts on first run
+    init_cybercrime_tables()
+    init_fir_tables()
 
     # ── Blueprint Registration ────────────────────────────────────────────────
     app.register_blueprint(threat_bp,    url_prefix="/api")
@@ -39,6 +51,10 @@ def create_app():
     app.register_blueprint(saferoute_bp, url_prefix="/api")
     app.register_blueprint(contact_bp,   url_prefix="/api")
     app.register_blueprint(community_bp, url_prefix="/api")
+    app.register_blueprint(cybercrime_bp,     url_prefix="/api")
+    app.register_blueprint(fir_bp,            url_prefix="/api")
+    app.register_blueprint(severity_bp,       url_prefix="/api")
+    app.register_blueprint(infrastructure_bp, url_prefix="/api")
 
     # ── Health Check ─────────────────────────────────────────────────────────
     @app.route("/health", methods=["GET"])

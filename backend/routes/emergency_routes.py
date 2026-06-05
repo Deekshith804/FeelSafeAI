@@ -44,6 +44,10 @@ def api_emergency_alert():
     except (ValueError, TypeError):
         return jsonify(error_response("'lat' and 'lon' must be valid numbers.")[0]), 400
 
+    audio_ref = data.get("audio_reference_id") or data.get("audio_payload", {}).get("audio_reference_id")
+    audio_trans = data.get("transcript") or data.get("audio_payload", {}).get("transcript")
+    audio_ts = data.get("timestamp") or data.get("audio_payload", {}).get("timestamp")
+
     result = trigger_emergency(
         lat           = lat,
         lon           = lon,
@@ -54,7 +58,14 @@ def api_emergency_alert():
         retry_attempt = 1,
         risk_level    = data.get("risk_level", "HIGH"),
         threat_text   = data.get("threat_text", ""),
+        audio_reference_id = audio_ref,
+        audio_transcript   = audio_trans,
+        audio_timestamp    = audio_ts,
+        contact_numbers    = data.get("contact_numbers"),
     )
+
+    if result.get("success") is False:
+        return jsonify(result), 400
 
     return jsonify({"success": True, **result}), 200
 
@@ -70,7 +81,8 @@ def api_emergency_retry():
             "lon":              77.2167,
             "previous_attempt": 1,
             "user_id":          1,
-            "contact_phone":    "..."
+            "contact_phone":    "...",
+            "contact_numbers":  [...]
         }
     """
     data    = request.get_json(silent=True) or {}
@@ -93,6 +105,10 @@ def api_emergency_retry():
         user_id          = data.get("user_id"),
         contact_phone    = data.get("contact_phone"),
         user_name        = data.get("user_name", "FeelSafe User"),
+        contact_numbers  = data.get("contact_numbers"),
     )
+
+    if result.get("success") is False:
+        return jsonify(result), 400
 
     return jsonify({"success": True, **result}), 200
