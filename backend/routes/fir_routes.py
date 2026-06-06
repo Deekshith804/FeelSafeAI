@@ -36,6 +36,10 @@ def api_fir_generate():
         date_str = data.get("incident_date")
         accused = data.get("accused_description", "Unknown")
         
+        # Log universal voice engine metadata if present
+        if "source" in data:
+            print(f"[FIRRoute] Received multilingual voice payload - Text: '{data.get('text')}', Lang: {data.get('language')}, Source: {data.get('source')}")
+
         result = generate_fir(
             incident_text=desc,
             language=lang,

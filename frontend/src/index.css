@@ -46,3 +46,25 @@ body {
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+
+@keyframes timeline-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.timeline-shimmer-active {
+  background: linear-gradient(90deg, #00E5FF 25%, #00FF9D 50%, #00E5FF 75%);
+  background-size: 200% 100%;
+  animation: timeline-shimmer 2s infinite linear;
+}
+
+.timeline-shimmer-bg {
+  background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%);
+  background-size: 200% 100%;
+  animation: timeline-shimmer 1.5s infinite linear;
+}
+

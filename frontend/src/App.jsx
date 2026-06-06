@@ -9,6 +9,8 @@ import Dashboard from './pages/Dashboard';
 import CybercrimeMap from './pages/CybercrimeMap';
 import AutoFIR from './pages/AutoFIR';
 import EmergencyServices from './pages/EmergencyServices';
+import AIEmergencyNavigator from './pages/AIEmergencyNavigator';
+
 
 function App() {
   const [activeTrip, setActiveTripState] = useState(() => {
@@ -46,6 +48,7 @@ function App() {
           <Route path="/cybercrime-map" element={<CybercrimeMap />} />
           <Route path="/auto-fir" element={<AutoFIR />} />
           <Route path="/emergency-services" element={<EmergencyServices activeTrip={activeTrip} setActiveTrip={setActiveTrip} />} />
+          <Route path="/ai-navigator" element={<AIEmergencyNavigator />} />
         </Routes>
       </main>
     </div>

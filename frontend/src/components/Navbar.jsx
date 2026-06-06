@@ -1,7 +1,7 @@
 // components/Navbar.jsx
 // Updated: Safe Route → Community (reflects repurposed page)
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Map, Users, AlertTriangle, LayoutDashboard, ShieldAlert, FileText, Phone } from 'lucide-react';
+import { Shield, Map, Users, AlertTriangle, LayoutDashboard, ShieldAlert, FileText, Phone, Compass } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function Navbar() {
@@ -15,6 +15,7 @@ export default function Navbar() {
     { name: 'Cyber Map',  path: '/cybercrime-map', icon: ShieldAlert },
     { name: 'Auto FIR',   path: '/auto-fir',    icon: FileText },
     { name: 'Services',   path: '/emergency-services', icon: Phone },
+    { name: 'AI Navigator', path: '/ai-navigator', icon: Compass },
   ];
 
   return (

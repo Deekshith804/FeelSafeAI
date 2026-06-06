@@ -6,6 +6,7 @@ import SOSButton from '../components/SOSButton';
 import SeverityPanel from '../components/SeverityPanel';
 import { triggerEmergency, retryEmergency, analyzeThreat, getContacts, addContact, deleteContact } from '../services/api';
 import { saveRecording } from '../utils/audioStorage';
+import { universalVoiceEngine } from '../utils/voiceEngine';
 import clsx from 'clsx';
 
 const RISK_COLOR = { HIGH: '#FF3B5C', MEDIUM: '#FFC857', LOW: '#00FF9D' };
@@ -33,7 +34,7 @@ export default function Emergency() {
   // Speech Recognition state
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [speechError, setSpeechError] = useState('');
-  const voiceRecognitionRef = useRef(null);
+  const [voiceMetadata, setVoiceMetadata] = useState(null);
 
   // Audio recording state
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
@@ -54,27 +55,9 @@ export default function Emergency() {
       );
     }
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.continuous = false;
-      rec.interimResults = false;
-      rec.lang = 'en-IN';
-      rec.onresult = (event) => {
-        const text = event.results[0][0].transcript;
-        if (text) {
-          setThreatText(text);
-          handleAnalyzeThreatWithText(text);
-        }
-      };
-      rec.onend = () => setIsRecordingVoice(false);
-      rec.onerror = (e) => {
-        console.error('Speech recognition error', e);
-        setSpeechError('Speech recognition failed. Please try typing.');
-      };
-      voiceRecognitionRef.current = rec;
-    }
+    // Set up Voice engine cleanup on unmount
     return () => {
+      universalVoiceEngine.stopListening();
       if (autoRecordTimerRef.current) clearTimeout(autoRecordTimerRef.current);
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
@@ -211,17 +194,17 @@ export default function Emergency() {
   };
 
   const handleAnalyzeThreat = () => {
-    handleAnalyzeThreatWithText(threatText);
+    handleAnalyzeThreatWithText(threatText, voiceMetadata);
   };
 
-  const handleAnalyzeThreatWithText = async (textVal) => {
+  const handleAnalyzeThreatWithText = async (textVal, metadata = null) => {
     if (!textVal.trim()) return;
     if (isAlerting) return;
     setIsAnalyzing(true);
     setAnalysis(null);
     setEscalationResult(null);
     try {
-      const res = await analyzeThreat(textVal, userLocation.lat, userLocation.lon, 1, 'FeelSafe User');
+      const res = await analyzeThreat(textVal, userLocation.lat, userLocation.lon, 1, 'FeelSafe User', null, metadata);
       setAnalysis(res);
       const risk = res.risk_level || 'LOW';
       if (res?.auto_escalated && res?.escalation_result) {
@@ -249,17 +232,40 @@ export default function Emergency() {
   };
 
   const toggleVoiceInput = () => {
-    if (!voiceRecognitionRef.current) {
+    if (!universalVoiceEngine.isSupported()) {
       alert("Speech recognition is not supported in this browser.");
       return;
     }
     if (isRecordingVoice) {
-      voiceRecognitionRef.current.stop();
+      universalVoiceEngine.stopListening();
       setIsRecordingVoice(false);
     } else {
       setSpeechError('');
-      voiceRecognitionRef.current.start();
       setIsRecordingVoice(true);
+      universalVoiceEngine.startListening({
+        lang: 'auto',
+        continuous: false,
+        onResult: (result) => {
+          setThreatText(result.text);
+          const meta = {
+            text: result.text,
+            language: result.language,
+            source: 'voice'
+          };
+          setVoiceMetadata(meta);
+          if (result.isFinal) {
+            handleAnalyzeThreatWithText(result.text, meta);
+          }
+        },
+        onError: (err) => {
+          console.error(err);
+          setSpeechError('Speech recognition failed. Please try typing.');
+          setIsRecordingVoice(false);
+        },
+        onEnd: () => {
+          setIsRecordingVoice(false);
+        }
+      });
     }
   };
 
@@ -440,6 +446,13 @@ export default function Emergency() {
                 Cancel Alert
               </motion.button>
             )}
+
+            {isAlerting && countdown === 0 && !escalationResult && (
+              <div className="w-full glass p-4 rounded-2xl border border-[#FFC857]/40 bg-[#FFC857]/5 flex items-center justify-center gap-3 mt-4">
+                <Loader2 className="w-5 h-5 text-[#FFC857] animate-spin" />
+                <span className="font-bold text-sm text-[#FFC857]">Sending emergency alerts to contacts...</span>
+              </div>
+            )}
           </div>
 
           <div className="w-full max-w-sm flex justify-center">
@@ -518,18 +531,33 @@ export default function Emergency() {
                             "text-[10px] font-bold px-2 py-0.5 rounded-full border",
                             r.sms_status === 'delivered'
                               ? 'bg-[#00FF9D]/20 text-[#00FF9D] border-[#00FF9D]/30'
-                              : r.sms_status === 'sent' || r.sms_status === 'queued'
+                              : (r.sms_status === 'queued' || r.sms_status === 'sent' || r.sms_status === 'sending')
                               ? 'bg-[#FFC857]/20 text-[#FFC857] border-[#FFC857]/30'
                               : r.sms_status === 'not_triggered'
                               ? 'bg-gray-800 text-gray-500 border-gray-700'
                               : 'bg-[#FF3B5C]/20 text-[#FF3B5C] border-[#FF3B5C]/30'
                           )}>
                             SMS: {
-                              r.sms_status === 'delivered' ? 'Delivered' :
-                              (r.sms_status === 'sent' || r.sms_status === 'queued') ? 'Pending' :
-                              r.sms_status === 'not_triggered' ? '—' : 'Failed'
+                              r.sms_status === 'delivered' ? '✓ Delivered' :
+                              (r.sms_status === 'queued' || r.sms_status === 'sent' || r.sms_status === 'sending') ? '⏳ Pending' :
+                              r.sms_status === 'not_triggered' ? '—' :
+                              r.sms_sid ? '⏳ Pending' : '✗ Failed'
                             }
                           </span>
+                          {/* Show SID if available */}
+                          {r.sms_sid && (
+                            <span className="text-[9px] text-gray-500 font-mono px-1">
+                              SID: {r.sms_sid.slice(-8)}
+                            </span>
+                          )}
+                          {/* Show error if failed */}
+                          {r.sms_status === 'failed' && !r.sms_sid && (
+                            <span className="text-[9px] text-[#FF3B5C] px-1 break-all">
+                              {r.is_trial_error
+                                ? '⚠️ Trial: Number not verified in Twilio'
+                                : r.sms_error ? r.sms_error.substring(0, 60) : 'Send failed'}
+                            </span>
+                          )}
                           {/* Voice Call */}
                           <span className={clsx(
                             "text-[10px] font-bold px-2 py-0.5 rounded-full border",
@@ -551,28 +579,50 @@ export default function Emergency() {
                 <div className="flex flex-wrap gap-2">
                   {escalationResult?.results?.some(r => r.sms_status === 'delivered') && (
                     <span className="text-[10px] font-bold bg-[#00FF9D]/10 text-[#00FF9D] border border-[#00FF9D]/20 px-2 py-0.5 rounded-full">
-                      SMS Delivered
+                      ✓ SMS Delivered
                     </span>
                   )}
-                  {escalationResult?.results?.some(r => r.sms_status === 'sent' || r.sms_status === 'queued') && (
+                  {escalationResult?.results?.some(r => r.sms_sid && r.sms_status !== 'delivered' && r.sms_status !== 'failed') && (
                     <span className="text-[10px] font-bold bg-[#FFC857]/10 text-[#FFC857] border border-[#FFC857]/20 px-2 py-0.5 rounded-full">
-                      SMS Pending
+                      ⏳ SMS Queued (in transit)
                     </span>
                   )}
-                  {escalationResult?.results?.some(r => r.sms_status === 'failed') && (
+                  {escalationResult?.results?.some(r => r.sms_status === 'failed' && !r.sms_sid) && (
                     <span className="text-[10px] font-bold bg-[#FF3B5C]/10 text-[#FF3B5C] border border-[#FF3B5C]/20 px-2 py-0.5 rounded-full">
-                      SMS Failed
+                      ✗ SMS Failed
                     </span>
                   )}
                   {escalationResult?.twilio_call_triggered && (
                     <span className="text-[10px] font-bold bg-[#7C4DFF]/10 text-[#7C4DFF] border border-[#7C4DFF]/20 px-2 py-0.5 rounded-full">
-                      Voice Call Initiated
+                      📞 Voice Call Initiated
                     </span>
                   )}
                   <span className="text-[10px] font-bold bg-[#25D366]/10 text-[#25D366] border border-[#25D366]/20 px-2 py-0.5 rounded-full">
                     WhatsApp Available
                   </span>
                 </div>
+
+                {/* Twilio Trial Account Warning */}
+                {escalationResult?.results?.some(r => r.is_trial_error) && (
+                  <div className="mt-3 p-3 bg-yellow-950/40 border border-yellow-500/40 rounded-xl text-xs">
+                    <div className="font-bold text-yellow-300 mb-1">⚠️ Twilio Trial Account Detected</div>
+                    <p className="text-yellow-200/80 mb-2">
+                      SMS failed because your Twilio account is in trial mode and the destination numbers are not verified.
+                    </p>
+                    <p className="text-yellow-200/70">
+                      To fix this, either:
+                    </p>
+                    <ul className="text-yellow-200/70 list-disc list-inside mt-1 space-y-0.5">
+                      <li>Upgrade your Twilio account (recommended for production)</li>
+                      <li>Verify each contact number at{' '}
+                        <a href="https://twilio.com/user/account/phone-numbers/verified" target="_blank" rel="noreferrer"
+                          className="text-yellow-300 underline hover:text-yellow-100">
+                          twilio.com → Verified Callers
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -734,6 +784,44 @@ export default function Emergency() {
                         {analysis.action_tips.slice(0, 3).map((tip, i) => <li key={i}>{tip}</li>)}
                       </ul>
                     )}
+
+                    {/* Government Guidance Layer */}
+                    <div className="mt-4 pt-4 border-t border-white/10 space-y-3 text-left">
+                      <div className="text-xs font-bold text-[#00E5FF] uppercase tracking-wider">
+                        🏛️ AI Government Guidance & Safety Navigator
+                      </div>
+                      
+                      <div className="text-xs text-gray-300 bg-white/5 p-3 rounded-xl border border-white/5">
+                        {riskLevel === 'LOW' && (
+                          <p>💡 <strong>LOW Risk Protocol:</strong> Guidance only. Your emergency contacts have <strong>NOT</strong> been alerted. Please follow safety guidance below.</p>
+                        )}
+                        {riskLevel === 'MEDIUM' && (
+                          <p>⚠️ <strong>MEDIUM Risk Protocol:</strong> Guidance + Contact Notification. Emergency contacts are being notified via WhatsApp/SMS fallback where necessary. Review guidance below.</p>
+                        )}
+                        {riskLevel === 'HIGH' && (
+                          <p>🚨 <strong>HIGH Risk Protocol:</strong> Full SOS Escalation! Real-time Twilio SMS alerts have been dispatched. Voice call backup and authorities notifications are active.</p>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="p-2 bg-black/40 border border-gray-800 rounded-xl">
+                          <span className="text-red-400 font-bold block">🚨 Police Helpline</span>
+                          <span className="text-white">Call 112 / 100 for dispatch</span>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-gray-800 rounded-xl">
+                          <span className="text-purple-400 font-bold block">👩 Women Helpline</span>
+                          <span className="text-white">Call 1091 / 181 for safety</span>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-gray-800 rounded-xl col-span-2">
+                          <span className="text-yellow-400 font-bold block">💻 Cybercrime Assistance</span>
+                          <span className="text-white">Report cyber fraud at <a href="https://cybercrime.gov.in" target="_blank" rel="noreferrer" className="text-[#00E5FF] underline">cybercrime.gov.in</a></span>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-gray-800 rounded-xl col-span-2">
+                          <span className="text-cyan-400 font-bold block">🚑 Ambulance & Medical Support</span>
+                          <span className="text-white">Call 108 / 102 for immediate dispatch</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               )}

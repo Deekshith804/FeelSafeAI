@@ -48,6 +48,10 @@ def api_emergency_alert():
     audio_trans = data.get("transcript") or data.get("audio_payload", {}).get("transcript")
     audio_ts = data.get("timestamp") or data.get("audio_payload", {}).get("timestamp")
 
+    # Log universal voice engine metadata if present
+    if "source" in data:
+        print(f"[EmergencyRoute] Received multilingual voice payload - Text: '{data.get('text')}', Lang: {data.get('language')}, Source: {data.get('source')}")
+
     result = trigger_emergency(
         lat           = lat,
         lon           = lon,

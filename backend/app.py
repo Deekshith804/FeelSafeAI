@@ -19,6 +19,7 @@ from routes.saferoute_routes import saferoute_bp
 from routes.contact_routes   import contact_bp
 from routes.community_routes import community_bp
 from routes.cybercrime_routes     import cybercrime_bp
+from routes.cyber_routes          import cyber_bp
 from routes.fir_routes            import fir_bp
 from routes.severity_routes       import severity_bp
 from routes.infrastructure_routes import infrastructure_bp
@@ -52,6 +53,7 @@ def create_app():
     app.register_blueprint(contact_bp,   url_prefix="/api")
     app.register_blueprint(community_bp, url_prefix="/api")
     app.register_blueprint(cybercrime_bp,     url_prefix="/api")
+    app.register_blueprint(cyber_bp,          url_prefix="/api")
     app.register_blueprint(fir_bp,            url_prefix="/api")
     app.register_blueprint(severity_bp,       url_prefix="/api")
     app.register_blueprint(infrastructure_bp, url_prefix="/api")
@@ -76,4 +78,4 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     print("[FeelSafe] Backend running on http://localhost:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)

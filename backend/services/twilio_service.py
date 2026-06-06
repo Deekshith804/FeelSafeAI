@@ -12,6 +12,7 @@ Functions:
 """
 
 import os
+import sys
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,31 +43,43 @@ def _get_client():
 def normalize_phone(phone: str) -> str:
     """
     Normalize an Indian phone number to E.164 format.
-    STRICT Rules:
-    - If number has 10 digits -> +91XXXXXXXXXX
-    - If number already starts with +91 and has 12 digits -> keep it
-    - If number starts with 91 (no plus) and has 12 digits -> prepend +
-    - Else -> reject/log error, return "" (no guessing, no trimming)
+    Rules:
+    - Remove all spaces, dashes, symbols before processing
+    - If 10 digits → convert to +91XXXXXXXXXX
+    - If starts with 91 and length 12 → convert to +91XXXXXXXXXX
+    - If already +91XXXXXXXXXX → keep as is
     """
     if not phone:
         return ""
-    cleaned = phone.strip()
-    digits = "".join(c for c in cleaned if c.isdigit())
     
-    if len(digits) == 10:
-        return f"+91{digits}"
-    elif cleaned.startswith("+91") and len(digits) == 12:
-        return f"+{digits}"
-    elif cleaned.startswith("91") and len(digits) == 12:
-        return f"+{digits}"
+    # Remove all spaces, dashes, symbols before processing
+    cleaned = "".join(c for c in phone if c.isdigit())
+    has_plus_prefix = phone.strip().startswith("+91")
+    
+    if len(cleaned) == 10:
+        return f"+91{cleaned}"
+    elif cleaned.startswith("91") and len(cleaned) == 12:
+        return f"+{cleaned}"
+    elif has_plus_prefix and len(cleaned) == 12:
+        return f"+{cleaned}"
     
     logger.error(f"[TwilioService] Rejecting invalid phone format: {phone}")
     return ""
 
 
+def _safe_print(label: str, value: str):
+    """Print with Unicode fallback for Windows consoles with limited encodings."""
+    try:
+        print(f"{label} {value}")
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+        safe_val = value.encode(enc, errors='replace').decode(enc)
+        print(f"{label} {safe_val}")
+
+
 def send_sms_alert(phone: str, message: str) -> dict:
     """
-    Send an SMS alert via Twilio.
+    Send an SMS alert via Twilio using direct number.
 
     Returns:
         { "success": bool, "sid": str|None, "status": str|None, "error": str|None }
@@ -75,37 +88,56 @@ def send_sms_alert(phone: str, message: str) -> dict:
     if not normalized:
         return {"success": False, "sid": None, "status": "failed", "error": "Invalid phone format"}
 
-    from_phone = os.getenv("TWILIO_PHONE", "").strip()
+    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", os.getenv("TWILIO_PHONE", "")).strip()
 
     logger.info(f"[TwilioSMS] Sending SMS → {normalized}")
 
     client = _get_client()
     if not client:
         return {"success": False, "sid": None, "status": "failed", "error": "Twilio not configured"}
-    if not from_phone:
-        return {"success": False, "sid": None, "status": "failed", "error": "TWILIO_PHONE not set"}
+    if not TWILIO_PHONE_NUMBER:
+        return {"success": False, "sid": None, "status": "failed", "error": "TWILIO_PHONE_NUMBER not set"}
 
     try:
         msg = client.messages.create(
             body=message,
-            from_=from_phone,
+            from_=TWILIO_PHONE_NUMBER,
             to=normalized,
         )
-        print("SMS SENDING TO:", normalized)
-        print("SMS FROM:", from_phone)
-        print("MESSAGE:", message)
+        print("SMS TO:", normalized)
+        print("SMS FROM:", TWILIO_PHONE_NUMBER)
+        _safe_print("MESSAGE:", message)
         print("TWILIO RESPONSE SID:", msg.sid)
         print("STATUS:", msg.status)
-        print("TWILIO ERROR CODE:", getattr(msg, "error_code", None))
-        print("TWILIO ERROR MESSAGE:", getattr(msg, "error_message", None))
         
+        if not msg.sid:
+            print("SMS FAILED")
+            return {"success": False, "sid": None, "status": "failed", "error": "No SID returned from Twilio"}
+            
         logger.info(f"[TwilioSMS] Sent — SID: {msg.sid}, Status: {msg.status}")
         return {"success": True, "sid": msg.sid, "status": msg.status, "error": None}
     except TwilioRestException as e:
-        print("SMS SENDING FAILED TO:", normalized)
-        print("TWILIO REST EXCEPTION ERROR:", str(e))
+        print("SMS TO:", normalized)
+        print("SMS FROM:", TWILIO_PHONE_NUMBER)
+        _safe_print("MESSAGE:", message)
+        print("TWILIO RESPONSE SID:", None)
+        print("STATUS:", "failed")
+        print("SMS FAILED")
         logger.error(f"[TwilioSMS] Failed for {normalized}: {e}")
-        return {"success": False, "sid": None, "status": "failed", "error": str(e)}
+        err_str = str(e)
+        is_trial_error = "unverified" in err_str.lower() or "trial" in err_str.lower()
+        user_hint = (
+            f"Trial account: verify {normalized} at twilio.com/user/account/phone-numbers/verified"
+            if is_trial_error else None
+        )
+        return {
+            "success": False,
+            "sid": None,
+            "status": "failed",
+            "error": err_str,
+            "is_trial_error": is_trial_error,
+            "user_hint": user_hint,
+        }
 
 
 def make_emergency_call(
@@ -185,18 +217,30 @@ def send_sms_to_contacts(contacts: list, message: str) -> list:
 
     Returns:
         List of result dicts with contact info + SMS status.
+        sms_status values:
+            'queued'  — Twilio accepted and queued (SID returned, real delivery in progress)
+            'sent'    — Twilio marked as sent (SID returned)
+            'failed'  — Twilio rejected or error (no SID)
     """
     results = []
     for contact in contacts:
         phone = contact.get("phone", "")
         result = send_sms_alert(phone, message)
+        # Use actual Twilio status if available (queued/sent/delivered/failed)
+        # If success=True, SID was returned → real delivery in progress
+        if result["success"] and result.get("sid"):
+            twilio_status = result.get("status") or "queued"  # Twilio initial status
+        else:
+            twilio_status = "failed"
         results.append({
-            "contact_name":  contact.get("name", "Contact"),
-            "phone":         phone,
-            "normalized":    normalize_phone(phone),
-            "sms_status":    "sent" if result["success"] else "failed",
-            "sms_sid":       result.get("sid"),
-            "sms_error":     result.get("error"),
+            "contact_name":   contact.get("name", "Contact"),
+            "phone":          phone,
+            "normalized":     normalize_phone(phone),
+            "sms_status":     twilio_status,
+            "sms_sid":        result.get("sid"),
+            "sms_error":      result.get("error") if not result["success"] else None,
+            "is_trial_error": result.get("is_trial_error", False),
+            "user_hint":      result.get("user_hint"),
         })
     return results
 

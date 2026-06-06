@@ -5,8 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   getCybercrimeHotspots,
   getCybercrimeForecast,
-  getCyberThreatFeed,
-  getCyberGovAlerts,
+  getLiveThreatFeed,
+  getNationalPortalIntel,
   submitCyberReport
 } from '../services/api';
 import L from 'leaflet';
@@ -38,12 +38,12 @@ export default function CybercrimeMap() {
     try {
       const [hRes, tRes, aRes] = await Promise.all([
         getCybercrimeHotspots(),
-        getCyberThreatFeed(15),
-        getCyberGovAlerts(5)
+        getLiveThreatFeed(),
+        getNationalPortalIntel()
       ]);
       if (hRes.success) setHotspots(hRes.hotspots);
-      if (tRes.success) setThreatFeed(tRes.threats);
-      if (aRes.success) setAdvisories(aRes.advisories);
+      if (tRes.success) setThreatFeed(tRes.items || []);
+      if (aRes.success) setAdvisories(aRes.items || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -98,8 +98,8 @@ export default function CybercrimeMap() {
   useEffect(() => {
     loadData();
     const interval = setInterval(() => {
-      getCyberThreatFeed(15).then(res => {
-        if (res?.success) setThreatFeed(res.threats);
+      getLiveThreatFeed().then(res => {
+        if (res?.success) setThreatFeed(res.items || []);
       });
     }, 15000);
     return () => clearInterval(interval);
@@ -154,31 +154,73 @@ export default function CybercrimeMap() {
             Live Threat Feed
           </h2>
 
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-            <AnimatePresence>
-              {threatFeed.map((threat) => (
-                <motion.div 
-                  key={threat.id} 
-                  initial={{ opacity: 0, y: 10 }} 
-                  animate={{ opacity: 1, y: 0 }}
-                  className="p-3 bg-black/40 rounded-2xl border border-white/5 hover:border-white/10 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-bold text-xs px-2 py-0.5 rounded-full" 
-                          style={{ backgroundColor: `${threat.color}20`, color: threat.color }}>
-                      {threat.type}
-                    </span>
-                    <span className="text-[10px] text-gray-500">{threat.time}</span>
+          {loading ? (
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="p-3 bg-white/5 rounded-2xl border border-white/5 animate-pulse space-y-2.5">
+                  <div className="flex justify-between items-center">
+                    <div className="h-4 bg-white/10 rounded w-1/3" />
+                    <div className="h-3 bg-white/10 rounded w-1/5" />
                   </div>
-                  <p className="text-xs text-gray-300 mt-1.5 font-medium">{threat.description}</p>
-                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-white/5 text-[10px] text-gray-500">
-                    <span>Source: {threat.source}</span>
-                    <span className="font-bold text-[#00FF9D]">{threat.city}</span>
-                  </div>
-                </motion.div>
+                  <div className="h-3 bg-white/10 rounded w-1/2" />
+                  <div className="h-3 bg-white/10 rounded w-5/6" />
+                  <div className="h-3 bg-white/10 rounded w-2/3" />
+                </div>
               ))}
-            </AnimatePresence>
-          </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
+              <AnimatePresence>
+                {threatFeed.map((threat, index) => {
+                  const severityColor = threat.severity === 'HIGH' ? '#FF3B5C' : threat.severity === 'MEDIUM' ? '#FFC857' : '#00E5FF';
+                  return (
+                    <motion.div 
+                      key={threat.id || index} 
+                      initial={{ opacity: 0, y: 10 }} 
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-3 bg-black/40 rounded-2xl border border-white/5 hover:border-white/10 transition-colors space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-[10px] px-2 py-0.5 rounded-full" 
+                              style={{ backgroundColor: `${severityColor}20`, color: severityColor }}>
+                          {threat.category || 'Threat'}
+                        </span>
+                        <span className="text-[10px] text-gray-500">{threat.time}</span>
+                      </div>
+                      
+                      <div className="space-y-1">
+                        <h3 className="font-bold text-xs text-white leading-snug">{threat.title}</h3>
+                        <p className="text-xs text-gray-300 font-medium leading-relaxed">{threat.description}</p>
+                      </div>
+
+                      <div className="text-[10px] bg-white/5 p-2 rounded-xl border border-white/5 flex items-center justify-between gap-2">
+                        <span className="text-gray-400 font-bold truncate max-w-[110px]" title={threat.source}>
+                          {threat.source}
+                        </span>
+                        {threat.source_url && (
+                          <a 
+                            href={threat.source_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[#00E5FF] hover:underline font-black shrink-0"
+                          >
+                            Verify Link
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1 border-t border-white/5 text-[10px]">
+                        <span className="font-bold text-emerald-400/90 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                          {threat.source_type === 'Official Source' ? 'Official Source' : 'AI-Simulated'}
+                        </span>
+                        <span className="font-bold text-[#00FF9D]">{threat.location}</span>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+            </div>
+          )}
         </div>
 
         {/* Center Panel: Map + Controls */}
@@ -297,22 +339,66 @@ export default function CybercrimeMap() {
             National Portal Intel
           </h2>
 
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin">
-            {advisories.map((adv) => (
-              <div key={adv.id} className="p-3.5 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-all">
-                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1.5">
-                  <span className="font-semibold text-[#FFC857]">{adv.issued_by}</span>
-                  <span>{adv.advisory_date}</span>
+          {loading ? (
+            <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="p-3.5 bg-white/5 rounded-2xl border border-white/5 animate-pulse space-y-2.5">
+                  <div className="flex justify-between items-center">
+                    <div className="h-3.5 bg-white/10 rounded w-1/4" />
+                    <div className="h-3 bg-white/10 rounded w-1/5" />
+                  </div>
+                  <div className="h-4 bg-white/10 rounded w-3/4" />
+                  <div className="h-3 bg-white/10 rounded w-5/6" />
+                  <div className="h-3.5 bg-white/10 rounded w-1/2" />
                 </div>
-                <h3 className="font-bold text-xs text-white leading-snug">{adv.title}</h3>
-                <p className="text-[11px] text-gray-400 mt-1.5 line-clamp-3">{adv.description}</p>
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5 text-[10px]">
-                  <span className="text-gray-500">States: {adv.affected_states.join(', ')}</span>
-                  <span className="px-2 py-0.5 rounded-md bg-[#FF3B5C]/20 text-[#FF3B5C] font-bold">{adv.severity}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin">
+              {advisories.map((adv, index) => {
+                const severityColor = adv.severity === 'HIGH' ? '#FF3B5C' : adv.severity === 'MEDIUM' ? '#FFC857' : '#00E5FF';
+                return (
+                  <div key={adv.id || index} className="p-3.5 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-all space-y-2.5">
+                    <div className="flex items-center justify-between text-[10px] text-gray-500">
+                      <span className="font-bold text-[#FFC857]">{adv.source}</span>
+                      <span>{adv.time}</span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-xs text-white leading-snug">{adv.title}</h3>
+                      <p className="text-[11px] text-gray-400 leading-relaxed line-clamp-3" title={adv.description}>
+                        {adv.description}
+                      </p>
+                    </div>
+
+                    <div className="text-[10px] bg-white/5 p-2 rounded-xl border border-white/5 flex items-center justify-between gap-2">
+                      <span className="text-gray-400 font-bold">
+                        {adv.source_type === 'Official Source' ? 'Official Advisory' : 'AI-Simulated Intel'}
+                      </span>
+                      {adv.source_url && (
+                        <a 
+                          href={adv.source_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-[#00E5FF] hover:underline font-black shrink-0"
+                        >
+                          Source Link
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[10px]">
+                      <span className="text-gray-500 font-medium">Scope: {adv.location}</span>
+                      <span className="px-2 py-0.5 rounded font-bold text-[9px]"
+                            style={{ backgroundColor: `${severityColor}20`, color: severityColor }}>
+                        {adv.severity}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           <a 
             href="https://cybercrime.gov.in" 

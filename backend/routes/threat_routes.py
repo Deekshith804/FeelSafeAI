@@ -49,6 +49,10 @@ def analyze_threat():
     if not text:
         return jsonify(error_response("Field 'text' must not be empty.")[0]), 400
 
+    # Log universal voice engine metadata if present
+    if "source" in data:
+        print(f"[ThreatRoute] Received multilingual voice payload - Text: '{data.get('text')}', Lang: {data.get('language')}, Source: {data.get('source')}")
+
     # ── Threat analysis ───────────────────────────────────────────────────────
     result      = analyse_threat(text)
     risk_level  = result["risk_level"]

@@ -11,6 +11,7 @@ import {
   getFIRLanguages,
   updateFIRStatus
 } from '../services/api';
+import { universalVoiceEngine } from '../utils/voiceEngine';
 
 const FIR_TRANSLATIONS = {
   en: {
@@ -41,17 +42,17 @@ const FIR_TRANSLATIONS = {
     evidence: "ஆதாரம் (Evidence)",
     complaintType: "புகார் வகை (Complaint Type)",
     legalStatement: "சட்ட அறிக்கை வரைவு (Legal Statement Draft)",
-    statementPrefix: "மேலே கூறப்பட்ட உண்மைகள் எனது அறிவிற்கும் நம்பிக்கத்திற்கும் எட்டிய வரை உண்மை என்று நான் இதன் மூலம் உறுதியளிக்கிறேன்.",
+    statementPrefix: "மேலே கூறப்பட்ட உண்மைகள் எனது அறிவிற்கும் நம்பிக்கத்திற்கும் எட்டிய வரை உண்மை ಎಂದು நான் இதன் மூலம் உறுதியளிக்கிறேன்.",
   },
   te: {
-    title: "ప్రథమ సమాచార నిവേదిక (FIR) డ్రాఫ్ట్",
+    title: "ప్రథమ సమాచార నివేదిక (FIR) డ్రాఫ్ట్",
     incidentSummary: "సంఘటన సారాంశం (Incident Summary)",
     location: "స్థలం (Location)",
     time: "సమయం (Time)",
     evidence: "ఆధారం (Evidence)",
     complaintType: "ఫిర్యాదు రకం (Complaint Type)",
     legalStatement: "చట్టపరమైన ప్రకటన ముసాయిదా (Legal Statement Draft)",
-    statementPrefix: "పైన పేర్కొన్న విషయాలు నా పరిజ్ఞానం మరియు నമ്മకం మేరకు నిజమని నేను దీని ద్వారా ప్రమాణీకరిస్తున్నాను.",
+    statementPrefix: "పైన పేర్కొన్న విషయాలు నా పరిజ్ఞానం మరియు నమ్మకం మేరకు నిజమని నేను దీని ద్వారా ప్రమాణీకరిస్తున్నాను.",
   },
   kn: {
     title: "ಪ್ರಥಮ ಮಾಹಿತಿ ವರದಿ (FIR) ಕರಡು",
@@ -61,7 +62,7 @@ const FIR_TRANSLATIONS = {
     evidence: "ಪುರಾವೆಗಳು (Evidence)",
     complaintType: "ದೂರಿನ ಪ್ರಕಾರ (Complaint Type)",
     legalStatement: "ಕಾನೂನು ಹೇಳಿಕೆಯ ಕರಡು (Legal Statement Draft)",
-    statementPrefix: "ಮೇಲೆ ತಿಳಿಸಲಾದ ಸಂಗതിಗಳು ನನ್ನ ತಿಳುವಳಿಕೆ ಮತ್ತು ನಂಬಿಕೆಯ ಪ್ರಕಾರ ನಿಜವೆಂದು ನಾನು ಈ ಮೂಲಕ ಪ್ರಾಮಾಣಿಕವಾಗಿ ಘೋಷಿಸುತ್ತೇನೆ.",
+    statementPrefix: "ಮೇಲೆ ತಿಳಿಸಲಾದ ಸಂಗತಿಗಳು ನನ್ನ ತಿಳುವಳಿಕೆ ಮತ್ತು ನಂಬಿಕೆಯ ಪ್ರಕಾರ ನಿಜವೆಂದು ನಾನು ಈ ಮೂಲಕ ಪ್ರಾಮಾಣಿಕವಾಗಿ ಘೋಷಿಸುತ್ತೇನೆ.",
   },
   ml: {
     title: "പ്രഥമ വിവര റിപ്പോർട്ട് (FIR) ഡ്രാഫ്റ്റ്",
@@ -113,7 +114,7 @@ const TRANSLATION_MAP = {
     "Bandra West, Mumbai": "பாந்த்ரா மேற்கு, மும்பை",
     "Andheri West, Mumbai": "அந்தேரி மேற்கு, மும்பை",
     "Hitech City, Hyderabad": "ஹைடெக் சிட்டி, ஹைதராபாத்",
-    "Secunderabad, Hyderabad": "செகந்திரาபாத், ஹைதராபாத்",
+    "Secunderabad, Hyderabad": "செகந்திராபாத், ஹைதராபாத்",
     "Someone is following me": "யாரோ என்னை பின்தொடர்கிறார்கள்",
     "Online phishing transaction theft of 50000 rupees": "50000 ரூபாய் ஆன்லைன் பிஷிங் பரிவர்த்தனை திருட்டு",
     "Unknown caller claiming to be a bank agent": "வங்கி முகவர் என்று கூறிக்கொள்ளும் அறியப்படாத அழைப்பாளர்",
@@ -219,7 +220,6 @@ const translateVal = (val, targetLang) => {
   const map = TRANSLATION_MAP[targetLang];
   if (!map) return val;
   if (map[val]) return map[val];
-  // Substring replacement for common entities
   let result = val;
   Object.keys(map).forEach(key => {
     result = result.replaceAll(key, map[key]);
@@ -246,7 +246,70 @@ export default function AutoFIR() {
   const [uploading, setUploading] = useState(false);
   const [evidenceList, setEvidenceList] = useState([]);
   
-  const recognitionRef = useRef(null);
+  const [voiceMetadata, setVoiceMetadata] = useState(null);
+  const [baseDesc, setBaseDesc] = useState('');
+
+  // Status Shift Simulation states
+  const [firStatus, setFirStatus] = useState('FILED');
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simulationMessage, setSimulationMessage] = useState('');
+
+  // Sync status when active FIR changes
+  useEffect(() => {
+    if (activeFir) {
+      setFirStatus(activeFir.status || 'FILED');
+      setSimulationMessage('');
+    }
+  }, [activeFir]);
+
+  const handleSimulateStatusShift = () => {
+    if (isSimulating) return;
+    setIsSimulating(true);
+    
+    // Step 1: FILED (immediate)
+    setFirStatus('FILED');
+    setSimulationMessage('FIR drafted and filed successfully. Initiating tracking...');
+    
+    // Step 2: ASSIGNED (after 2.5 seconds)
+    setTimeout(() => {
+      setFirStatus('ASSIGNED');
+      setSimulationMessage('Officer has been assigned to your complaint: Inspector Suresh Kumar.');
+    }, 2500);
+
+    // Step 3: INVESTIGATION (after 5.5 seconds)
+    setTimeout(() => {
+      setFirStatus('INVESTIGATION');
+      setSimulationMessage('Case is under active investigation. Loading status and verifying SHA-256 evidence logs...');
+    }, 5500);
+
+    // Step 4: RESOLVED (after 8.5 seconds)
+    setTimeout(() => {
+      setFirStatus('RESOLVED');
+      setSimulationMessage('Complaint has been resolved successfully.');
+      setIsSimulating(false);
+
+      if (activeFir?.fir_id) {
+        updateFIRStatus(activeFir.fir_id, 'RESOLVED', 'Inspector Suresh Kumar').then(() => {
+          loadInitialData(); // Refresh history
+        }).catch(err => console.error(err));
+      }
+    }, 8500);
+  };
+
+  const getDocumentText = () => {
+    let baseText = activeFir?.draft_translated || '';
+    
+    let statusLog = '';
+    if (firStatus === 'ASSIGNED') {
+      statusLog = `[ STATUS LOG: An officer has been assigned to your case... ]\n=========================================\n\n`;
+    } else if (firStatus === 'INVESTIGATION') {
+      statusLog = `[ STATUS LOG: Case is under active investigation... ]\n=========================================\n\n`;
+    } else if (firStatus === 'RESOLVED') {
+      statusLog = `[ STATUS LOG: The FIR has been resolved and closed... ]\n=========================================\n\n`;
+    }
+    
+    return statusLog + baseText;
+  };
 
   // Load languages and past FIR complaints
   const loadInitialData = async () => {
@@ -264,48 +327,42 @@ export default function AutoFIR() {
 
   useEffect(() => {
     loadInitialData();
-
-    // Check browser SpeechRecognition support
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-IN';
-      
-      rec.onresult = (event) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-        if (finalTranscript) {
-          setDesc(prev => prev + ' ' + finalTranscript);
-        }
-      };
-      
-      rec.onend = () => setRecording(false);
-      recognitionRef.current = rec;
-    }
+    return () => {
+      universalVoiceEngine.stopListening();
+    };
   }, []);
 
   const toggleRecording = () => {
-    if (!recognitionRef.current) {
+    if (!universalVoiceEngine.isSupported()) {
       alert("Speech recognition is not supported in this browser. Please type incident description.");
       return;
     }
     
     if (recording) {
-      recognitionRef.current.stop();
+      universalVoiceEngine.stopListening();
       setRecording(false);
     } else {
-      recognitionRef.current.start();
+      setBaseDesc(desc);
       setRecording(true);
+      universalVoiceEngine.startListening({
+        lang: 'auto',
+        continuous: true,
+        onResult: (result) => {
+          setDesc((baseDesc + ' ' + result.text).trim());
+          setVoiceMetadata({
+            text: result.text,
+            language: result.language,
+            source: 'voice'
+          });
+        },
+        onError: (err) => {
+          console.error(err);
+          setRecording(false);
+        },
+        onEnd: () => {
+          setRecording(false);
+        }
+      });
     }
   };
 
@@ -322,7 +379,10 @@ export default function AutoFIR() {
         complainant_name: name,
         complainant_phone: phone,
         incident_location: location,
-        accused_description: accused
+        accused_description: accused,
+        text: voiceMetadata ? voiceMetadata.text : desc,
+        language: voiceMetadata ? voiceMetadata.language : lang,
+        source: voiceMetadata ? "voice" : "text"
       });
       if (res.fir_id) {
         setActiveFir(res);
@@ -349,7 +409,6 @@ export default function AutoFIR() {
       const res = await uploadEvidence(formData);
       if (res.success) {
         setEvidenceList(prev => [...prev, res]);
-        // Refresh active FIR details
         loadInitialData();
       }
     } catch (err) {
@@ -361,7 +420,6 @@ export default function AutoFIR() {
 
   const handlePrint = () => {
     const printContent = document.getElementById("fir-print-area")?.innerText;
-    const originalContent = document.body.innerHTML;
     
     const w = window.open();
     w.document.write(`
@@ -399,49 +457,6 @@ export default function AutoFIR() {
     } catch (err) {
       console.error(err);
     }
-  };
-
-  const getTimelineClass = (status, stage) => {
-    const order = ['FILED', 'ASSIGNED', 'RESOLVED'];
-    const statusIndex = order.indexOf(status);
-    const stageIndex = order.indexOf(stage);
-
-    if (statusIndex >= stageIndex) return 'bg-[#00FF9D] text-[#0B1020]';
-    return 'bg-gray-800 text-gray-400';
-  };
-
-  const getStructuredPreviewText = () => {
-    const trans = FIR_TRANSLATIONS[lang] || FIR_TRANSLATIONS['en'];
-    const evText = evidenceList.length > 0
-      ? evidenceList.map(e => `${e.filename} (SHA-256: ${e.sha256_hash.substring(0, 16)}...)`).join('\n   ')
-      : translateVal('No files attached', lang);
-    
-    return `
-[ ${trans.title} ]
-=========================================
-
-1. ${trans.incidentSummary}:
-   ${translateVal(desc, lang)}
-
-2. ${trans.location}:
-   ${translateVal(location, lang)}
-
-3. ${trans.time}:
-   ${new Date().toLocaleString()}
-
-4. ${trans.evidence}:
-   ${evText}
-
-5. ${trans.complaintType}:
-   ${translateVal(activeFir?.crime_type || 'General Incident', lang).toUpperCase()}
-
-6. ${trans.legalStatement}:
-   ${trans.statementPrefix}
-
-   Name: ${translateVal(name, lang)}
-   Phone: ${phone}
-=========================================
-`.trim();
   };
 
   return (
@@ -570,28 +585,157 @@ export default function AutoFIR() {
                   
                   {/* Interactive Status Cycle for Demo */}
                   <button 
-                    onClick={() => handleStatusCycle(activeFir.fir_id, activeFir.status)}
-                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-400 font-bold transition-all flex items-center gap-1.5"
+                    onClick={handleSimulateStatusShift}
+                    disabled={isSimulating}
+                    className="px-4 py-2 bg-gradient-to-r from-cyan-900 to-indigo-950 hover:from-cyan-800 hover:to-indigo-900 border border-[#00E5FF]/40 text-xs text-white font-bold rounded-2xl transition-all shadow-[0_0_12px_rgba(0,229,255,0.15)] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Simulate Status Shift <ArrowRight className="w-3.5 h-3.5" />
+                    {isSimulating ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#00E5FF]" /> : <ArrowRight className="w-3.5 h-3.5 text-[#00E5FF]" />}
+                    <span>{isSimulating ? 'Simulating Status Shift...' : 'Simulate Status Shift'}</span>
                   </button>
                 </div>
 
-                {/* Timeline display */}
-                <div className="grid grid-cols-3 gap-2 text-center text-[10px] py-2">
-                  <div className="space-y-1">
-                    <div className={`mx-auto w-6 h-6 rounded-full flex items-center justify-center font-bold ${getTimelineClass(activeFir.status, 'FILED')}`}>1</div>
-                    <div className="font-semibold text-white">FILED / DRAFTED</div>
+                {/* Confetti Animation when Resolved */}
+                {firStatus === 'RESOLVED' && (
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
+                    {[...Array(16)].map((_, i) => {
+                      const angle = (i / 16) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+                      const velocity = 80 + Math.random() * 120;
+                      const tx = Math.cos(angle) * velocity;
+                      const ty = Math.sin(angle) * velocity - 30;
+                      return (
+                        <motion.div
+                          key={i}
+                          className="absolute w-2 h-2 rounded-full"
+                          style={{
+                            left: '50%',
+                            top: '40%',
+                            backgroundColor: i % 2 === 0 ? '#00FF9D' : '#00E5FF',
+                          }}
+                          initial={{ scale: 0, x: 0, y: 0, opacity: 1 }}
+                          animate={{
+                            scale: [0, 1.2, 0],
+                            x: tx,
+                            y: ty,
+                            opacity: [1, 1, 0]
+                          }}
+                          transition={{ duration: 1.6, ease: "easeOut", delay: (i % 4) * 0.05 }}
+                        />
+                      );
+                    })}
                   </div>
-                  <div className="space-y-1">
-                    <div className={`mx-auto w-6 h-6 rounded-full flex items-center justify-center font-bold ${getTimelineClass(activeFir.status, 'ASSIGNED')}`}>2</div>
-                    <div className="font-semibold text-white">ASSIGNED OFFICER</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className={`mx-auto w-6 h-6 rounded-full flex items-center justify-center font-bold ${getTimelineClass(activeFir.status, 'RESOLVED')}`}>3</div>
-                    <div className="font-semibold text-white">RESOLVED</div>
+                )}
+
+                {/* Enhanced 4-step Timeline display */}
+                <div className="relative py-6 px-2">
+                  {/* Background track line */}
+                  <div className={`absolute left-6 right-6 top-[2.2rem] h-1 bg-gray-800 rounded -z-10 ${
+                    firStatus === 'INVESTIGATION' && isSimulating ? 'timeline-shimmer-bg' : ''
+                  }`} />
+                  
+                  {/* Active progress fill line */}
+                  <div 
+                    className={`absolute left-6 top-[2.2rem] h-1 bg-gradient-to-r from-[#00E5FF] to-[#00FF9D] transition-all duration-1000 rounded -z-10 ${
+                      firStatus === 'INVESTIGATION' && isSimulating ? 'timeline-shimmer-active' : ''
+                    }`}
+                    style={{
+                      width: 
+                        firStatus === 'FILED' ? '0%' :
+                        firStatus === 'ASSIGNED' ? '33%' :
+                        firStatus === 'INVESTIGATION' ? '66%' :
+                        firStatus === 'RESOLVED' ? '100%' : '0%'
+                    }}
+                  />
+
+                  {/* 4 status points */}
+                  <div className="flex justify-between items-start">
+                    {[
+                      { id: 'FILED', label: 'FILED / DRAFTED', symbol: '📝' },
+                      { id: 'ASSIGNED', label: 'ASSIGNED OFFICER', symbol: '👮' },
+                      { id: 'INVESTIGATION', label: 'UNDER INVESTIGATION', symbol: '🔍' },
+                      { id: 'RESOLVED', label: 'RESOLVED', symbol: '✅' }
+                    ].map((step) => {
+                      const order = ['FILED', 'ASSIGNED', 'INVESTIGATION', 'RESOLVED'];
+                      const statusIdx = order.indexOf(firStatus);
+                      const stepIdx = order.indexOf(step.id);
+                      const isCompleted = statusIdx > stepIdx;
+                      const isActive = statusIdx === stepIdx;
+                      const glowColor = isActive 
+                        ? '0 0 20px rgba(0, 229, 255, 0.7)' 
+                        : isCompleted 
+                          ? '0 0 15px rgba(0, 255, 157, 0.4)' 
+                          : 'none';
+
+                      return (
+                        <div key={step.id} className="flex flex-col items-center space-y-2 max-w-[80px] text-center">
+                          {/* Step Circle */}
+                          <motion.div
+                            key={step.id + '_' + (isActive ? 'active' : 'inactive')}
+                            initial={isActive ? { scale: 0.85, opacity: 0.8 } : { scale: 1, opacity: 1 }}
+                            animate={{
+                              scale: isActive ? [1, 1.15, 1] : 1,
+                              boxShadow: glowColor,
+                            }}
+                            transition={{
+                              scale: isActive 
+                                ? { repeat: Infinity, duration: 1.5, ease: "easeInOut" } 
+                                : { duration: 0.4 },
+                              boxShadow: { duration: 0.5 },
+                              default: { duration: 0.4 }
+                            }}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-base border-2 transition-all duration-500 relative ${
+                              isCompleted ? 'bg-[#00FF9D]/15 border-[#00FF9D] text-[#00FF9D]' :
+                              isActive ? 'bg-[#0B1020] border-[#00E5FF] text-[#00E5FF]' :
+                              'bg-[#0B1020] border-gray-800 text-gray-500'
+                            }`}
+                          >
+                            {isCompleted ? '✓' : step.symbol}
+
+                            {/* Loader spin on Investigation step during active simulation */}
+                            {step.id === 'INVESTIGATION' && isActive && isSimulating && (
+                              <span className="absolute inset-0 rounded-full border-2 border-t-transparent border-r-transparent border-[#00E5FF] animate-spin" />
+                            )}
+                          </motion.div>
+
+                          {/* Step Label */}
+                          <span className={`text-[8px] font-black uppercase tracking-wider transition-colors duration-500 leading-tight ${
+                            isActive ? 'text-[#00E5FF]' :
+                            isCompleted ? 'text-[#00FF9D]' :
+                            'text-gray-500'
+                          }`}>
+                            {step.label}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
+
+                {/* Simulation Status Message Alert */}
+                {simulationMessage && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`p-4 border rounded-2xl text-center text-xs font-bold leading-relaxed flex items-center justify-center gap-3 ${
+                      firStatus === 'RESOLVED' 
+                        ? 'border-[#00FF9D]/30 bg-[#00FF9D]/5 text-[#00FF9D] shadow-[0_0_20px_rgba(0,255,157,0.15)]' 
+                        : 'border-[#00E5FF]/20 bg-[#00E5FF]/5 text-[#00E5FF] shadow-[0_0_15px_rgba(0,229,255,0.05)]'
+                    }`}
+                  >
+                    {firStatus === 'RESOLVED' ? (
+                      <motion.div 
+                        initial={{ scale: 0, rotate: -180 }} 
+                        animate={{ scale: 1, rotate: 0 }} 
+                        transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                        className="w-5 h-5 bg-[#00FF9D] text-[#0B1020] rounded-full flex items-center justify-center font-black"
+                      >
+                        ✓
+                      </motion.div>
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-[#00E5FF] animate-pulse" />
+                    )}
+                    <span>{simulationMessage}</span>
+                  </motion.div>
+                )}
 
                 {/* Document Display */}
                 <div className="space-y-2">
@@ -609,7 +753,7 @@ export default function AutoFIR() {
                     id="fir-print-area" 
                     className="p-4 bg-black/40 border border-white/5 rounded-2xl max-h-[300px] overflow-y-auto text-xs font-mono text-gray-300 whitespace-pre-wrap leading-relaxed scrollbar-thin"
                   >
-                    {activeFir?.draft_translated}
+                    {getDocumentText()}
                   </div>
                 </div>
 

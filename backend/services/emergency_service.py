@@ -190,8 +190,8 @@ def trigger_emergency(
 
     # ── Agentic Decision Layer ────────────────────────────────────────────────
     # Determine which Twilio actions to trigger based on risk + escalation level
-    trigger_sms  = (risk_level == "HIGH") or (escalation_level >= 2)
-    trigger_call = (escalation_level >= 3) or (risk_level == "HIGH" and escalation_level >= 2)
+    trigger_sms  = True
+    trigger_call = (escalation_level >= 3)
 
     sms_results  = []
     call_results = []
@@ -326,6 +326,9 @@ def _merge_results(wa_links: list, sms_results: list, call_results: list) -> lis
             "whatsapp_link":   wa["whatsapp_link"],
             "sms_status":      sms.get("sms_status", "not_triggered"),
             "sms_sid":         sms.get("sms_sid"),
+            "sms_error":       sms.get("sms_error"),
+            "is_trial_error":  sms.get("is_trial_error", False),
+            "user_hint":       sms.get("user_hint"),
             "call_status":     call.get("call_status", "not_triggered"),
             "call_sid":        call.get("call_sid"),
         })

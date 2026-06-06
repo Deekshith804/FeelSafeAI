@@ -24,10 +24,18 @@ export const checkHealth = () =>
   apiCall('/health', {}, { status: 'offline' });
 
 // ── Threat ────────────────────────────────────────────────────────────────────
-export const analyzeThreat = (text, lat = null, lon = null, userId = 1, userName = 'FeelSafe User', tripId = null) =>
+export const analyzeThreat = (text, lat = null, lon = null, userId = 1, userName = 'FeelSafe User', tripId = null, voiceMetadata = null) =>
   apiCall('/api/analyze-threat', {
     method: 'POST',
-    body: JSON.stringify({ text, lat, lon, user_id: userId, user_name: userName, trip_id: tripId }),
+    body: JSON.stringify({ 
+      text, 
+      lat, 
+      lon, 
+      user_id: userId, 
+      user_name: userName, 
+      trip_id: tripId,
+      ...(voiceMetadata || {})
+    }),
   }, {
     success: true,
     risk_level: 'LOW',
@@ -196,6 +204,12 @@ export const submitCyberReport = (data) =>
 
 export const getCyberGovAlerts = (limit = 10) =>
   apiCall(`/api/cybercrime/gov-alerts?limit=${limit}`, {}, { success: true, advisories: [], count: 0 });
+
+export const getLiveThreatFeed = () =>
+  apiCall('/api/cyber/live-threat-feed', {}, { success: true, items: [] });
+
+export const getNationalPortalIntel = () =>
+  apiCall('/api/cyber/national-portal-intel', {}, { success: true, items: [] });
 
 // ── Auto FIR & Complaint Generator ───────────────────────────────────────────
 export const generateFIR = (data) =>
